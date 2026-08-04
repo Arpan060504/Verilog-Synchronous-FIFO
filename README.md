@@ -268,7 +268,7 @@ Verilog-Synchronous-FIFO/
 ├── tb/
 │   └── fifo_tb.v
 │
-├── docs/
+├── waveform/
 │   └── fifo_waveform.png
 │
 ├── README.md
