@@ -1,351 +1,123 @@
-# Parameterized Synchronous FIFO in Verilog
+# Synchronous FIFO — RTL Design & Verification
 
-A parameterized synchronous FIFO (First-In, First-Out) buffer designed in Verilog RTL and verified using a directed self-checking testbench.
+A parameterizable, single-clock FIFO in SystemVerilog with a two-tier
+verification environment: a directed regression and a self-checking
+randomized regression backed by a golden reference model.
 
-The design uses a single clock domain, circular read/write pointers, occupancy tracking, full and empty status generation, and explicit handling of simultaneous read and write requests.
+## Why this project
 
-## Overview
+A basic FIFO is one of the most common "first project" designs, so what
+differentiates this one is the verification approach, not just the RTL:
+a golden-model scoreboard, weighted-random stimulus that naturally hits
+every corner case (full, empty, simultaneous read/write in all three
+occupancy regions, rejected writes/reads), and manual functional coverage
+tracking — the same methodology used in industry testbenches, adapted to
+run on the open-source Icarus Verilog toolchain.
 
-A FIFO stores data in the same order in which it is received:
+## Architecture
 
-```text
-First In -> First Out
+```
+rtl/fifo.sv                 - DUT: parameterizable sync FIFO
+tb/fifo_directed_tb.sv       - original hand-written directed regression (24 checks)
+tb/fifo_random_tb.sv         - self-checking randomized regression (golden model + coverage)
+tb/fifo_coverage_model.sv    - documentation-only: class/covergroup version for full SV sims
+Makefile                     - `make directed`, `make random`, `make all`
 ```
 
-This project implements a synchronous FIFO in which all read and write operations occur with respect to the same clock.
+### DUT interface
 
-The default configuration is:
+| Port            | Dir | Width          | Description                                   |
+|------------------|-----|-----------------|------------------------------------------------|
+| clk, reset       | in  | 1               | synchronous, active-high reset                 |
+| data_in          | in  | DATA_WIDTH      | write data                                     |
+| write_request    | in  | 1               | write enable                                   |
+| read_request     | in  | 1               | read enable                                    |
+| data_out         | out | DATA_WIDTH      | read data (registered)                         |
+| empty / full     | out | 1               | standard status flags                          |
+| almost_empty/full| out | 1               | early-warning flags (parameterizable margin)   |
+| data_valid       | out | 1               | pulses one cycle when `data_out` is fresh      |
+| overflow         | out | 1               | pulses when a write is rejected (FIFO full)    |
+| underflow        | out | 1               | pulses when a read is rejected (FIFO empty)    |
+| fifo_count       | out | $clog2(DEPTH)+1 | live occupancy                                 |
 
-```text
-Data Width : 8 bits
-Depth      : 16 entries
-```
+Parameters: `DATA_WIDTH` (default 8), `DEPTH` (default 16),
+`ALMOST_FULL_MARGIN` / `ALMOST_EMPTY_MARGIN` (default 2).
 
-The RTL is parameterized so that the data width and FIFO depth can be configured for different instances.
+### Simultaneous read + write policy
 
-## Features
-
-- Parameterized data width
-- Parameterized FIFO depth
-- Single-clock synchronous operation
-- Circular read pointer
-- Circular write pointer
-- Occupancy counter
-- Empty flag generation
-- Full flag generation
-- Overflow protection
-- Underflow protection
-- Simultaneous read/write handling
-- Directed self-checking testbench
-- Waveform verification using GTKWave
-
-## FIFO Architecture
-
-The FIFO consists of:
-
-- Memory array for data storage
-- Write pointer for the next write location
-- Read pointer for the next read location
-- Occupancy counter for tracking stored entries
-- Full and empty status logic
-
-Conceptually:
-
-```text
-                 +----------------------+
-data_in -------->|                      |
-                 |      FIFO Memory     |
-write_request -->|                      |-----> data_out
-                 |                      |
-read_request --->|                      |
-                 +----------------------+
-                      ^            ^
-                      |            |
-                write_pointer  read_pointer
-
-                 Occupancy Counter
-                    |        |
-                    v        v
-                  empty     full
-```
-
-## Parameterization
-
-The FIFO provides default parameters:
-
-```verilog
-parameter DATA_WIDTH = 8;
-parameter DEPTH = 16;
-```
-
-The pointer width can be derived internally from the configured depth:
-
-```verilog
-localparam M = $clog2(DEPTH);
-```
-
-A parent or wrapper module can override the FIFO configuration during instantiation.
-
-Example:
-
-```verilog
-fifo #(
-    .DATA_WIDTH(16),
-    .DEPTH(32)
-) fifo_inst (
-    .clk(clk),
-    .reset(reset),
-    .data_in(data_in),
-    .read_request(read_request),
-    .write_request(write_request),
-    .data_out(data_out),
-    .empty(empty),
-    .full(full)
-);
-```
-
-This creates a FIFO with:
-
-```text
-Data Width = 16 bits
-Depth      = 32 entries
-```
-
-The current circular pointer implementation is intended for power-of-two FIFO depths.
-
-## FIFO Operation
-
-### Write Only
-
-When a write request is asserted and the FIFO is not full:
-
-```text
-write_request = 1
-read_request  = 0
-full          = 0
-```
-
-The input data is stored at the current write pointer location.
-
-The write pointer advances and the occupancy count increases.
-
-### Read Only
-
-When a read request is asserted and the FIFO is not empty:
-
-```text
-read_request  = 1
-write_request = 0
-empty         = 0
-```
-
-The oldest stored entry is transferred to `data_out`.
-
-The read pointer advances and the occupancy count decreases.
-
-### Simultaneous Read and Write
-
-When both requests are asserted during normal occupancy:
-
-```text
-read_request  = 1
-write_request = 1
-```
-
-One entry is read and one entry is written during the same clock cycle.
-
-Therefore:
-
-```text
-Occupancy before = N
-Occupancy after  = N
-```
-
-### Simultaneous Requests While Empty
-
-The implemented boundary policy performs a write-only operation when both requests are asserted while the FIFO is empty.
-
-```text
-EMPTY + READ + WRITE -> WRITE ONLY
-```
-
-### Simultaneous Requests While Full
-
-The implemented boundary policy performs a read-only operation when both requests are asserted while the FIFO is full.
-
-```text
-FULL + READ + WRITE -> READ ONLY
-```
-
-## Full and Empty Detection
-
-The occupancy counter tracks the number of valid entries stored in the FIFO.
-
-Empty condition:
-
-```verilog
-assign empty = (count == 0);
-```
-
-Full condition:
-
-```verilog
-assign full = (count == DEPTH);
-```
-
-## Overflow Protection
-
-A write-only request is rejected when the FIFO is full.
-
-The testbench fills the FIFO to its configured depth, attempts an additional write using `8'hFF`, and then drains the FIFO while checking the complete expected sequence.
-
-The rejected value does not appear in the drained data sequence.
-
-## Underflow Protection
-
-A read request is rejected when the FIFO is empty.
-
-The testbench verifies that an empty read does not cause the FIFO to leave its empty state.
+| FIFO state | Action on read_request & write_request together |
+|---|---|
+| empty      | write only (nothing valid to read yet) |
+| full       | read only (drains to make room) |
+| otherwise  | both — one word out, one word in, occupancy unchanged |
 
 ## Verification
 
-The project includes a directed self-checking Verilog testbench.
+### 1. Directed regression (`tb/fifo_directed_tb.sv`)
+24 hand-written checks: fill, drain, back-to-back reads, simultaneous R/W
+at empty/full/normal occupancy, overflow/underflow rejection.
 
-The testbench verifies:
+### 2. Randomized self-checking regression (`tb/fifo_random_tb.sv`)
+- Drives `write_request`/`read_request` with independent weighted
+  probabilities (55%) each cycle for 4000 cycles, so idle, write-only,
+  read-only, and simultaneous cycles all occur frequently.
+- A SystemVerilog queue (`mem_model[$]`) acts as a golden reference model,
+  implementing the same arbitration policy as the DUT.
+- After every clock edge, DUT outputs (`fifo_count`, `empty`, `full`,
+  `data_valid`, `data_out`) are compared against the model and any
+  mismatch is reported with a cycle-accurate error message.
+- Immediate assertions check protocol invariants every cycle (`full` and
+  `empty` never both true, `fifo_count` never exceeds `DEPTH`).
+- Manual functional-coverage bin counters track how many cycles hit each
+  interesting corner (full, empty, almost-full/empty, idle, rejected
+  write/read, simultaneous R/W at empty/full/normal).
 
-- Reset behavior
-- Basic write operations
-- Basic read operations
-- FIFO ordering
-- Simultaneous read/write operation
-- Full flag assertion
-- Write rejection while full
-- Complete FIFO drain
-- Empty flag assertion
-- Read rejection while empty
-- Simultaneous read/write request while empty
-- Data readback after the empty-boundary case
-- Circular pointer wraparound through extended write/read activity
+Latest run (4000 cycles):
 
-Example simulation output:
-
-```text
-PASS: Expected A1, Received a1
-PASS: Expected A2, Received a2
-PASS: Simultaneous R/W produced A3
-PASS: FIFO full flag asserted
-PASS: FIFO remained full after rejected write
-PASS: Expected A4, Received a4
-PASS: Expected A5, Received a5
-PASS: Expected A6, Received a6
-PASS: Expected B1, Received b1
-PASS: Expected C0, Received c0
-PASS: Expected C1, Received c1
-PASS: Expected C2, Received c2
-PASS: Expected C3, Received c3
-PASS: Expected C4, Received c4
-PASS: Expected C5, Received c5
-PASS: Expected C6, Received c6
-PASS: Expected C7, Received c7
-PASS: Expected C8, Received c8
-PASS: Expected C9, Received c9
-PASS: Expected CA, Received ca
-PASS: Expected CB, Received cb
-PASS: FIFO empty flag asserted
-PASS: Empty read correctly rejected
-PASS: Simultaneous R/W at empty performed write
-PASS: Expected D5, Received d5
+```
+Errors            : 0
+full asserted             : 127
+empty asserted            : 152
+almost_full asserted      : 639
+almost_empty asserted     : 593
+idle cycles               : 834
+write rejected (full)     : 32
+read rejected (empty)     : 35
+simul R/W (normal)        : 1077
+simul R/W (at full)       : 39
+simul R/W (at empty)      : 40
 ```
 
-## Project Structure
+Every interesting corner case is hit organically by the weighted-random
+stimulus, with zero scoreboard/assertion failures.
 
-```text
-Verilog-Synchronous-FIFO/
-│
-├── rtl/
-│   └── fifo.v
-│
-├── tb/
-│   └── fifo_tb.v
-│
-├── waveform/
-│   └── fifo_waveform.png
-│
-├── README.md
-│
-└── .gitignore
-```
+### 3. `tb/fifo_coverage_model.sv` — bonus, documentation only
+A class-based, constrained-random transaction generator plus a real
+`covergroup` with a cross-coverage bin for "simultaneous R/W at each
+occupancy corner." **This does not compile under Icarus Verilog** —
+Icarus does not implement SystemVerilog classes, `constraint` blocks, or
+`covergroup`. It's included to show the equivalent methodology as it
+would be written for Questa/VCS/Xcelium, since `fifo_random_tb.sv` is a
+functional (if lower-level) stand-in for what that file would do.
 
-## Simulation
-
-### Requirements
-
-- Icarus Verilog
-- GTKWave
-
-### Compile
-
-From the repository root:
+## Running it
 
 ```bash
-iverilog -o fifo_sim rtl/fifo.v tb/fifo_tb.v
+# requires Icarus Verilog (iverilog/vvp), e.g. `apt install iverilog`
+make directed   # 24-check directed regression
+make random     # 4000-cycle randomized regression with scoreboard + coverage
+make all         # both
+make waves       # generates fifo_test.vcd, view with gtkwave
+make clean
 ```
 
-### Run
+## Possible extensions
 
-```bash
-vvp fifo_sim
-```
-
-The simulation generates:
-
-```text
-fifo_test.vcd
-```
-
-### Open Waveform
-
-```bash
-gtkwave fifo_test.vcd
-```
-
-## Waveform
-
-Add the GTKWave screenshot to:
-
-```text
-docs/fifo_waveform.png
-```
-
-Then display it here:
-
-```markdown
-![Synchronous FIFO Waveform](docs/fifo_waveform.png)
-```
-
-## Tools Used
-
-- Verilog HDL
-- Icarus Verilog
-- GTKWave
-- Visual Studio Code
-
-## Future Improvements
-
-Possible extensions include:
-
-- Reusable task-based verification
-- Randomized transaction generation
-- Reference-model scoreboard
-- Pass/fail counters
-- Almost-full and almost-empty flags
-- Configurable threshold flags
-- SystemVerilog assertions
-- Functional coverage
-- Asynchronous FIFO implementation for clock-domain crossing
-
-## Author
-
-**Arpan**
-
-Electrical Engineering undergraduate interested in RTL design, digital hardware, and VLSI.
+- **Async (dual-clock) FIFO**: Gray-coded read/write pointers with 2-flop
+  synchronizers for clock-domain crossing — the natural "part 2" of this
+  project and a stronger signal of CDC understanding for interviews.
+- **Formal verification**: the invariants already checked by immediate
+  assertions (`count <= DEPTH`, `!(full && empty)`) are good candidates
+  for SymbiYosys/formal property proofs instead of simulation-only checks.
+- Port `fifo_random_tb.sv`'s golden-model idea into a real
+  class/covergroup UVM environment once a full SV simulator is available.
