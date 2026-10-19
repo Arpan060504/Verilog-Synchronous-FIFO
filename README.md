@@ -1,36 +1,82 @@
 # Parameterized Synchronous FIFO in SystemVerilog
 
-A single-clock, parameterized FIFO designed in SystemVerilog, with a self-checking verification environment and a completed OpenROAD physical-design run using the Nangate45 platform.
+A single-clock, parameterized FIFO implemented in SystemVerilog and verified with directed and randomized testbenches. The repository also includes recorded synthesis, timing, and physical-design results from an OpenROAD-flow-scripts run using the Nangate45 standard-cell platform.
 
-The project covers RTL design, corner-case handling, regression-based verification, synthesis, static timing analysis, and physical implementation.
+## Highlights
 
-## Project Highlights
+- Parameterized data width and FIFO depth.
+- Synchronous, active-high reset and registered output data.
+- Full, empty, almost-full, and almost-empty status flags.
+- `data_valid`, `overflow`, `underflow`, and occupancy outputs.
+- Explicit simultaneous read/write behavior at empty, full, and intermediate occupancy.
+- Directed testing and a randomized regression checked against a queue-based reference model.
+- OpenROAD physical-design artifacts, reports, a final GDS, and layout screenshots.
 
-- **Parameterized RTL:** configurable data width and FIFO depth.
-- **Defined simultaneous read/write behavior:** explicit policy at empty, full, and intermediate occupancy.
-- **Self-checking verification:** directed tests plus randomized stimulus checked against a golden reference model.
-- **Functional corner tracking:** counters for full/empty states, almost-full/almost-empty states, rejected requests, idle cycles, and simultaneous reads/writes.
-- **Physical design:** synthesized and implemented through OpenROAD-flow-scripts with Nangate45, with timing and area reports included in the repository.
+## Architecture
 
-## Repository Layout
+Default configuration: `DATA_WIDTH = 8`, `DEPTH = 16`.
+
+The FIFO uses a memory array, read and write pointers, and an occupancy counter. Reset is synchronous and active-high. The data output is registered and `data_valid` pulses when a read is performed.
+
+| Signal | Direction | Description |
+|---|---|---|
+| `clk` | Input | Single clock |
+| `reset` | Input | Synchronous, active-high reset |
+| `data_in` | Input | Input word, `DATA_WIDTH` bits wide |
+| `write_request` | Input | Requests a write |
+| `read_request` | Input | Requests a read |
+| `data_out` | Output | Registered output word |
+| `empty`, `full` | Output | FIFO occupancy status |
+| `almost_empty`, `almost_full` | Output | Early-warning occupancy flags |
+| `data_valid` | Output | Indicates a valid read result |
+| `overflow`, `underflow` | Output | Indicates rejected standalone write/read requests |
+| `fifo_count` | Output | Current stored-word count |
+
+### Parameters
+
+| Parameter | Default | Purpose |
+|---|---:|---|
+| `DATA_WIDTH` | 8 | Width of each stored word |
+| `DEPTH` | 16 | FIFO capacity in words |
+| `ALMOST_FULL_MARGIN` | 2 | Margin used for the almost-full threshold |
+| `ALMOST_EMPTY_MARGIN` | 2 | Margin used for the almost-empty threshold |
+
+The current pointer implementation is intended for positive power-of-two depths. For non-power-of-two depths, explicit pointer wrap logic is needed. Choose threshold margins consistently with the configured depth.
+
+### Simultaneous read/write policy
+
+When both requests are asserted in the same cycle, the FIFO applies this policy based on the occupancy before the active clock edge:
+
+| Pre-edge occupancy | Read | Write | Occupancy effect |
+|---|---|---|---|
+| Empty | Not performed | Accepted | Increases by one |
+| Full | Accepted | Not performed | Decreases by one |
+| Neither empty nor full | Accepted | Accepted | Unchanged |
+
+A standalone write while full is rejected and pulses `overflow`. A standalone read while empty is rejected and pulses `underflow`. The simultaneous-request cases at empty and full follow the policy above and do not raise those standalone-request error indications.
+
+## Repository layout
 
 ```text
 .
+├── README.md
 ├── rtl/
-│   ├── fifo.sv
-│   └── fifo.v
+│   └── fifo.sv
 ├── tb/
+│   ├── fifo_tb.sv
 │   ├── fifo_directed_tb.sv
 │   ├── fifo_random_tb.sv
 │   ├── fifo_coverage_model.sv
-│   └── fifo_tb.v
+│   └── results/
+│       ├── fifo_directed.log
+│       └── fifo_random.log
 ├── waveform/
 │   ├── fifo_waveform.png
 │   ├── fifo_waveform2.png
 │   └── fifo_waveform3.png
 └── physical_design/
-    ├── config.mk
     ├── 6_final.gds
+    ├── config.mk
     ├── reports/
     │   ├── synthesis_summary.txt
     │   ├── timing_summary.txt
@@ -40,64 +86,37 @@ The project covers RTL design, corner-case handling, regression-based verificati
         └── timing_path.png
 ```
 
-## Architecture and Interface
-
-Default configuration: `DATA_WIDTH = 8`, `DEPTH = 16`. The data storage is a depth-by-width memory array with read and write pointers, an occupancy counter, and status/control outputs.
-
-| Signal | Direction | Description |
-|---|---|---|
-| `clk` | Input | Single clock |
-| `reset` | Input | Synchronous, active-high reset |
-| `data_in` | Input | Input word, `DATA_WIDTH` bits |
-| `write_request` | Input | Requests a write |
-| `read_request` | Input | Requests a read |
-| `data_out` | Output | Registered output word |
-| `empty` / `full` | Output | FIFO empty/full status |
-| `almost_empty` / `almost_full` | Output | Early-warning occupancy flags |
-| `data_valid` | Output | One-cycle pulse when a new output word is read |
-| `overflow` / `underflow` | Output | One-cycle indication that a standalone write/read request was rejected |
-| `fifo_count` | Output | Current number of stored words |
-
-### Parameters
-
-| Parameter | Default | Purpose |
-|---|---:|---|
-| `DATA_WIDTH` | 8 | Width of each stored word |
-| `DEPTH` | 16 | Number of words the FIFO can store |
-| `ALMOST_FULL_MARGIN` | 2 | Almost-full threshold margin |
-| `ALMOST_EMPTY_MARGIN` | 2 | Almost-empty threshold margin |
-
-The RTL is intended for positive, power-of-two FIFO depths because the pointer width is derived using `$clog2(DEPTH)` and the pointers wrap naturally at that width. For a non-power-of-two depth, explicit pointer wrap logic would be needed. Parameter margins should also be chosen consistently with the configured depth.
-
-## Read/Write Behavior
-
-The FIFO uses the following policy when both requests are asserted in the same cycle:
-
-| Occupancy before the clock edge | Read action | Write action | Occupancy effect |
-|---|---|---|---|
-| Empty | Rejected/not performed | Accepted | Increases by one |
-| Full | Accepted | Not performed | Decreases by one |
-| Neither empty nor full | Accepted | Accepted | Unchanged |
-
-For standalone requests, a write is accepted only when the FIFO is not full, and a read is accepted only when the FIFO is not empty. A standalone write while full pulses `overflow`; a standalone read while empty pulses `underflow`. These indications are not raised merely because one side is suppressed under the simultaneous-request policy described above.
-
-The reset is synchronous and active-high. The output data is registered and `data_valid` pulses when a read operation supplies a fresh word.
-
 ## Verification
 
-Two runnable regressions are included. The randomized testbench maintains a software-style queue as a golden reference and compares the DUT's observable behavior against that model.
+The recorded regressions are available under [`tb/results/`](tb/results/).
 
 ### Directed regression
 
-The directed testbench covers basic FIFO behavior, filling and draining, back-to-back operations, boundary conditions, rejected requests, and simultaneous read/write behavior at empty, full, and intermediate occupancy. It is self-checking and reports a failure if any check fails.
+Use `tb/fifo_tb.sv` as the canonical directed testbench. It tracks failed checks, prints a final result, and calls `$fatal` if a check fails. `tb/fifo_directed_tb.sv` is an older version retained in the repository; it is not the testbench used by the command below.
+
+With Icarus Verilog installed, run these commands from the repository root:
+
+```bash
+iverilog -g2012 -Wall -s fifo_tb -o directed.vvp rtl/fifo.sv tb/fifo_tb.sv
+vvp directed.vvp
+```
+
+Recorded result: **25 failure conditions tracked, 0 failures**. See [`fifo_directed.log`](tb/results/fifo_directed.log).
 
 ### Randomized regression
 
-The randomized testbench drives read/write requests over 4,000 cycles. It checks DUT outputs against the reference model and tracks functional coverage counters for key scenarios.
+The randomized testbench uses weighted read/write stimulus and a queue-based golden reference model. It checks FIFO count, status flags, valid-data behavior, and read data; it also records manual functional coverage counters.
 
-**Recorded regression result: 4,000 cycles, 4,000 checks, 0 errors.**
+```bash
+iverilog -g2012 -Wall -s fifo_random_tb -o random.vvp rtl/fifo.sv tb/fifo_random_tb.sv
+vvp random.vvp
+```
 
-| Coverage counter | Recorded hits |
+Recorded result: **4,000 cycles, 4,000 cycle-level checks, 0 reported errors**. See [`fifo_random.log`](tb/results/fifo_random.log).
+
+The cycle-level check count is not the total number of individual comparisons: several assertions and comparisons can be performed during each cycle. Randomized coverage counts may vary between runs.
+
+| Coverage counter | Hits in recorded run |
 |---|---:|
 | Full asserted | 127 |
 | Empty asserted | 152 |
@@ -110,50 +129,47 @@ The randomized testbench drives read/write requests over 4,000 cycles. It checks
 | Simultaneous read/write at full | 39 |
 | Simultaneous read/write at empty | 40 |
 
-These counts are from the recorded run in this repository; they are not a guarantee that every random seed will produce identical counts.
+### SystemVerilog coverage-model file
 
-### Run the testbenches
+[`tb/fifo_coverage_model.sv`](tb/fifo_coverage_model.sv) shows a class/constraint/covergroup-based coverage approach for simulators with SystemVerilog coverage support. It is supplementary and is not part of the Icarus Verilog commands above; Icarus Verilog does not support all of the constructs used by that file.
 
-Install Icarus Verilog with `iverilog` and `vvp`. From the repository root, run:
+## Synthesis and physical design
 
-```bash
-# Compile and run the directed testbench
-iverilog -g2012 -o directed.vvp rtl/fifo.sv tb/fifo_directed_tb.sv
-vvp directed.vvp
-
-# Compile and run the randomized self-checking testbench
-iverilog -g2012 -o random.vvp rtl/fifo.sv tb/fifo_random_tb.sv
-vvp random.vvp
-```
-
-If your local checkout includes a Makefile, its targets can be used instead. Generated simulation executables and waveform dumps should not be committed unless they are deliberately being shared as artifacts.
-
-### Coverage-model note
-
-`tb/fifo_coverage_model.sv` documents a class/constraint/covergroup-style approach for a simulator with more complete SystemVerilog coverage support. It is supplementary; the Icarus-compatible randomized regression is the runnable self-checking test.
-
-## Synthesis and Physical Design
-
-The repository includes a physical-design configuration, final layout screenshot, timing-path screenshot, GDS output, and summary reports from an OpenROAD-flow-scripts run targeting **Nangate45**.
+The repository contains a physical-design configuration fragment, the final GDS, summary reports, and screenshots from a recorded OpenROAD-flow-scripts run using Nangate45.
 
 | Metric | Reported result |
 |---|---:|
-| Mapped standard-cell area after synthesis | 1,660.9 µm² |
+| Technology platform | Nangate45 |
+| Mapped standard-cell instances after synthesis | 988 |
+| Mapped synthesis area | 1,660.9 µm² |
 | Final standard-cell area | 1,647.6 µm² |
 | Core area | 2,911.1 µm² |
 | Die area | 3,243.87 µm² |
 | Standard-cell utilization | 56.60% |
 | Clock constraint | 1.0 ns |
-| Reported final critical-path delay | 0.7333 ns |
-| Setup slack | 0.3377 ns |
-| Hold slack | 0.0997 ns |
-| Setup / hold violations | 0 / 0 |
-| Final routing DRC violations | 0* |
+| Reported critical-path delay | 0.7333 ns |
+| Reported setup slack | +0.3377 ns |
+| Reported hold slack | +0.0997 ns |
+| Final setup / hold violations | 0 / 0 |
+| Final detailed-routing DRC violations | 0 |
 | Estimated total power | 3.877 mW |
 
-`* `The reported detailed-routing run had zero final DRC violations. EDA results are flow- and library-dependent estimates, not silicon measurements; power in particular depends on activity and modeling assumptions. The physical-design summary reports one warning, so the run should not be described as warning-free.
+Supporting artifacts:
 
-Artifacts: [physical-design reports](physical_design/reports/), [layout screenshot](physical_design/screenshots/layout.png), [timing-path screenshot](physical_design/screenshots/timing_path.png), and [GDS](physical_design/6_final.gds).
+- [Synthesis summary](physical_design/reports/synthesis_summary.txt)
+- [Timing summary](physical_design/reports/timing_summary.txt)
+- [Physical-design summary](physical_design/reports/physical_design_summary.txt)
+- [Final layout screenshot](physical_design/screenshots/layout.png)
+- [Timing-path screenshot](physical_design/screenshots/timing_path.png)
+- [Final GDS](physical_design/6_final.gds)
+
+These are EDA flow results, not silicon measurements. Power is an estimate that depends on the activity data and modeling assumptions. The physical-design summary records one flow warning; the run should not be described as warning-free. Review the original timing reports when comparing the critical-path delay and slack, since their definitions and analysis contexts may differ.
+
+### Reproducing the physical-design run
+
+`physical_design/config.mk` is an OpenROAD-flow-scripts configuration fragment, not a standalone flow. Its paths expect the RTL and constraint file to be staged in the locations defined by the ORFS design environment.
+
+**Reproduction note:** the constraint file referenced by this configuration is not currently included in this repository. To reproduce the physical-design run, provide the matching `constraint.sdc`, place the RTL and configuration in the expected ORFS design directory, and use a compatible ORFS/Nangate45 environment. Until that constraint file and setup instructions are committed, the reports and GDS should be treated as recorded results rather than a fully self-contained, one-command reproduction package.
 
 ## Tools
 
@@ -163,13 +179,13 @@ Artifacts: [physical-design reports](physical_design/reports/), [layout screensh
 - OpenROAD-flow-scripts and OpenROAD for physical implementation and timing analysis
 - Nangate45 standard-cell platform
 
-## Potential Next Steps
+## Potential extensions
 
-- Add explicit pointer wrap logic and tests for non-power-of-two depths.
-- Add formal checks for occupancy bounds, flag consistency, and accepted read/write transactions.
-- Add a dual-clock asynchronous FIFO with Gray-coded pointers and synchronizers as a separate CDC-focused extension.
-- Add a reproducible script or CI workflow that compiles and runs both regressions automatically.
+- Add explicit pointer-wrap logic and tests for non-power-of-two FIFO depths.
+- Add formal properties for occupancy bounds, status flags, and accepted read/write transactions.
+- Add automated regression scripts or CI that fail when either regression fails.
+- Build a separate asynchronous FIFO using Gray-coded pointers and synchronizers to explore clock-domain crossing.
 
 ## License
 
-No license is specified in this README. Add a `LICENSE` file if you intend to grant others explicit reuse rights.
+No license file is currently included. Without a license, the repository does not explicitly grant others permission to reuse or redistribute the code. Add a license if you intend to grant those rights.
