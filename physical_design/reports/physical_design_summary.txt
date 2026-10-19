@@ -1,0 +1,22 @@
+FIFO Physical Design Summary
+============================
+
+Technology: Nangate45
+Final standard-cell area: 1647.6 um^2
+Core area: 2911.1 um^2
+Die area: 3243.87 um^2
+Standard-cell utilization: 56.60%
+Final placed instance count: 2094
+Sequential cell count: 152
+Estimated total power: 3.877 mW
+Final setup slack: 0.3377 ns
+Final hold slack: 0.0997 ns
+Flow errors: 0
+Flow warnings: 1
+
+Power is an EDA estimate and depends on the flow's activity assumptions.
+The final report contains one warning (STA-0450); inspect the full log
+before describing the run as warning-free.
+
+Source: OpenROAD-flow-scripts logs/nangate45/fifo/base/6_report.json
+and reports/nangate45/fifo/base/6_finish.rpt

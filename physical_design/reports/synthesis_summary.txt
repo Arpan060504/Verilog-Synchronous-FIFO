@@ -1,1 +1,11 @@
+FIFO Synthesis Summary
+======================
 
+Technology: Nangate45
+Synthesis tool flow: OpenROAD-flow-scripts / Yosys
+Mapped standard-cell instances: 988
+Mapped standard-cell area: 1660.9 um^2
+Synthesis warnings: 0
+Synthesis errors: 0
+
+Source: OpenROAD-flow-scripts logs/nangate45/fifo/base/1_synth.json

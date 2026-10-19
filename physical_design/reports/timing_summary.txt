@@ -1,0 +1,17 @@
+FIFO Timing Summary
+===================
+
+Technology: Nangate45
+Clock constraint: 1.0 ns
+Final critical-path delay: 0.7333 ns
+Final setup slack: 0.3377 ns
+Final hold slack: 0.0997 ns
+Final setup violations: 0
+Final hold violations: 0
+Maximum slew violations: 0
+Maximum capacitance violations: 0
+
+Source: OpenROAD-flow-scripts reports/nangate45/fifo/base/6_finish.rpt
+and logs/nangate45/fifo/base/6_report.json
+
+Note: These are EDA flow estimates, not silicon measurements.
